@@ -28,14 +28,14 @@ class LineGroupingConfig:
     min_angle: float = 0.0
     max_angle: float = 180.0
     angle_step: float = 1.0
-    reference_geometry: List[int] = field(default_factory=lambda: [384, 384])
+    reference_geometry: List[int] = field(default_factory=lambda: [448, 448])
 
 @dataclass
 class IntersectionConfig:
     cluster_bandwidth_inner: float = 13.0
     cluster_bandwidth_border: float = 10.0
     coord_clip_min: float = 0.0
-    coord_clip_max: float = 400.0
+    coord_clip_max: float = 448.0
 
 @dataclass
 class LineVerificationConfig:
@@ -65,6 +65,8 @@ class TrainingSettingsConfig:
     weight_decay: float = 1e-4
     output_dir: str = "runs/train"
     dataset_dir: Optional[str] = None
+    val_dataset_dir: Optional[str] = None
+    seed: int = 42
 
 @dataclass
 class AppConfig:

@@ -19,20 +19,20 @@ class PostProcessParameters:
     distance_threshold_px: float = 8.5
     inner_bandwidth: float = 13.0
     border_bandwidth: float = 10.0
-    coordinate_clip_max: int = 400
+    coordinate_clip_max: int = 448
     bresenham_support_threshold: float = 0.75
     min_euclidean_distance: float = 40.0
     line_color: int = 0
     line_thickness: int = 3
     size_threshold: int = 1000
 class DetectedLine:
-    def __init__(self, x1: int, y1: int, x2: int, y2: int, img_w: int = 384, img_h: int = 384):
+    def __init__(self, x1: int, y1: int, x2: int, y2: int, img_w: int = 448, img_h: int = 448):
         self.x1 = int(x1)
         self.y1 = int(y1)
         self.x2 = int(x2)
         self.y2 = int(y2)
         self.orientation = self._set_orientation()
-        self.list_dis = self._dis_from_ref(384, 384)
+        self.list_dis = self._dis_from_ref(img_w, img_h)
     def calculate_angle(self) -> float:
         dx = self.x2 - self.x1
         dy = self.y2 - self.y1

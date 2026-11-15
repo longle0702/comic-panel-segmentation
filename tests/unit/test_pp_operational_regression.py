@@ -16,7 +16,7 @@ def test_operational_parameters_frozen():
     assert params.hough_max_line_gap == 30.0
     assert params.inner_bandwidth == 13.0
     assert params.border_bandwidth == 10.0
-    assert params.coordinate_clip_max == 400
+    assert params.coordinate_clip_max == 448
     assert params.bresenham_support_threshold == 0.75
     assert params.min_euclidean_distance == 40.0
     assert params.line_color == 0

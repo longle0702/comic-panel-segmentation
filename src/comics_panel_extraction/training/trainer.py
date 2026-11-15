@@ -16,6 +16,7 @@ class Trainer:
         steps_per_epoch: Optional[int] = None,
     ):
         self.config = config or TrainingConfig()
+        keras.utils.set_random_seed(self.config.seed)
         self.output_dir = Path(self.config.output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.model = build_unetpp(input_shape=self.config.input_shape)
@@ -33,20 +34,25 @@ class Trainer:
             weight_decay=self.config.weight_decay,
         )
 
+    @tf.function
+    def _compiled_train_step(self, x: tf.Tensor, y: tf.Tensor) -> tf.Tensor:
+        with tf.GradientTape() as tape:
+            preds = self.model(x, training=True)
+            loss = self.loss_fn(y, preds)
+        grads = tape.gradient(loss, self.model.trainable_variables)
+        self.optimizer.apply_gradients(zip(grads, self.model.trainable_variables))
+        return loss
+
+    @tf.function
+    def _compiled_eval_step(self, x: tf.Tensor, y: tf.Tensor) -> tf.Tensor:
+        preds = self.model(x, training=False)
+        return self.loss_fn(y, preds)
+
     def train_step(self, x: tf.Tensor, y: tf.Tensor) -> float:
-        with tf.device('/CPU:0'):
-            with tf.GradientTape() as tape:
-                preds = self.model(x, training=True)
-                loss = self.loss_fn(y, preds)
-            grads = tape.gradient(loss, self.model.trainable_variables)
-            self.optimizer.apply_gradients(zip(grads, self.model.trainable_variables))
-        return float(loss.numpy())
+        return float(self._compiled_train_step(x, y).numpy())
 
     def eval_step(self, x: tf.Tensor, y: tf.Tensor) -> float:
-        with tf.device('/CPU:0'):
-            preds = self.model(x, training=False)
-        loss = self.loss_fn(y, preds)
-        return float(loss.numpy())
+        return float(self._compiled_eval_step(x, y).numpy())
 
     def train_dataset(
         self,
@@ -58,11 +64,18 @@ class Trainer:
         best_val_loss = float("inf")
         history = {"train_loss": [], "val_loss": [], "lr": []}
 
+        # One iterator for the whole run so each pass over the data gets a new shuffle order.
+        train_iter = iter(train_ds)
         for epoch in range(self.config.epochs):
             epoch_losses = []
-            for step, (x, y) in enumerate(train_ds):
-                if step >= steps_per_epoch:
-                    break
+            for _ in range(steps_per_epoch):
+                batch = next(train_iter, None)
+                if batch is None:
+                    train_iter = iter(train_ds)
+                    batch = next(train_iter, None)
+                    if batch is None:
+                        break
+                x, y = batch
                 loss_val = self.train_step(x, y)
                 epoch_losses.append(loss_val)
 
@@ -85,9 +98,17 @@ class Trainer:
             else:
                 mean_val_loss = mean_train_loss
 
-            if mean_val_loss < best_val_loss:
+            improved = mean_val_loss < best_val_loss
+            if improved:
                 best_val_loss = mean_val_loss
                 self.model.save(str(self.output_dir / "best_model.keras"))
+
+            print(
+                f"Epoch {epoch + 1}/{self.config.epochs} - train_loss: {mean_train_loss:.4f}"
+                f" - val_loss: {mean_val_loss:.4f} - lr: {current_lr:.2e}"
+                f"{' - saved best' if improved else ''}",
+                flush=True,
+            )
 
         self.model.save(str(self.output_dir / "latest_model.keras"))
         return {

@@ -19,6 +19,7 @@ class ComicDatasetLoader:
         self.target_size = target_size
         self.shuffle = shuffle
         self.seed = seed
+        self._rng = np.random.default_rng(seed)
 
         if dataset_dir is not None:
             base = Path(dataset_dir)
@@ -59,8 +60,7 @@ class ComicDatasetLoader:
     def generator(self) -> Iterator[Tuple[np.ndarray, np.ndarray]]:
         indices = np.arange(len(self.pairs))
         if self.shuffle:
-            rng = np.random.default_rng(self.seed)
-            rng.shuffle(indices)
+            self._rng.shuffle(indices)
         for idx in indices:
             yield self.load_sample(int(idx))
 

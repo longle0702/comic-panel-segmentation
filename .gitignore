@@ -64,3 +64,9 @@ artifacts/
 # Local migration scratchpads and logs
 *.log
 .audit_cache/
+
+# Datasets (rebuild with get_*_data.py + prepare_data.py)
+data/
+
+# Training outputs
+runs/

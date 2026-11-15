@@ -87,7 +87,7 @@ comics-panel-extraction train --dataset path/to/dataset --config configs/default
 ### Line Segment Analysis
 - **Edge Detection**: Morphological opening (20x20) followed by Canny edge detection (50/100) and bridge morphology.
 - **Line Detection**: Probabilistic Hough Transform (rho=2, theta=pi/180, threshold=25, minLineLength=10, maxLineGap=30).
-- **Grouping & Clustering**: Distance features relative to reference geometry (384, 384); intersections clustered via Mean-Shift (inner bandwidth=13, border bandwidth=10, clipping to [0, 400]).
+- **Grouping & Clustering**: Distance features relative to reference geometry (448, 448); intersections clustered via Mean-Shift (inner bandwidth=13, border bandwidth=10, clipping to [0, 448]).
 - **Bresenham Validation**: Edge support ratio >= 0.75, minimum Euclidean length > 40 px; carved with thickness 3.
 - **Filtering**: Retains connected components strictly greater than 1000 px.
 

@@ -169,6 +169,7 @@ def main(args=None):
         warmup_epochs = app_cfg.training.warmup_epochs if app_cfg else 5
         weight_decay = app_cfg.training.weight_decay if app_cfg else 1e-4
         output_dir = parsed_args.output_dir or (app_cfg.training.output_dir if app_cfg else "runs/train")
+        seed = app_cfg.training.seed if app_cfg else 42
 
         train_cfg = TrainingConfig(
             epochs=epochs,
@@ -178,9 +179,10 @@ def main(args=None):
             weight_decay=weight_decay,
             dataset_dir=dataset_arg,
             output_dir=output_dir,
+            seed=seed,
         )
 
-        train_loader = ComicDatasetLoader(dataset_dir=train_cfg.dataset_dir, target_size=(448, 448), shuffle=True)
+        train_loader = ComicDatasetLoader(dataset_dir=train_cfg.dataset_dir, target_size=(448, 448), shuffle=True, seed=train_cfg.seed)
         if len(train_loader) == 0:
             print(f"Error: no valid image/mask pairs found under {train_cfg.dataset_dir}", file=sys.stderr)
             return 1
@@ -193,12 +195,13 @@ def main(args=None):
             batch_size=train_cfg.batch_size,
             target_size=(448, 448),
             shuffle=True,
+            seed=train_cfg.seed,
             repeat=True,
         )
 
         val_ds = None
         val_steps = 1
-        val_dataset_arg = parsed_args.val_dataset
+        val_dataset_arg = parsed_args.val_dataset or (app_cfg.training.val_dataset_dir if app_cfg else None)
         if val_dataset_arg and Path(val_dataset_arg).exists():
             val_loader = ComicDatasetLoader(dataset_dir=val_dataset_arg, target_size=(448, 448), shuffle=False)
             if len(val_loader) > 0:
