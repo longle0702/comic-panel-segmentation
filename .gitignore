@@ -70,3 +70,5 @@ data/
 
 # Training outputs
 runs/
+results/
+scripts/
