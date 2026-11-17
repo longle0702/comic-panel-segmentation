@@ -1,9 +1,13 @@
 from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
+from scipy.optimize import linear_sum_assignment
 from skimage.measure import label
 
 from comics_panel_extraction.evaluation.overlap import calculate_dice, calculate_iou
 from comics_panel_extraction.evaluation.types import PageEvaluationResult
+
+# Thresholds for mIoU@[.50:.95] / mDice@[.50:.95]: 0.50, 0.55, ..., 0.95.
+IOU_THRESHOLDS: Tuple[float, ...] = tuple(float(t) for t in np.round(np.arange(0.50, 0.951, 0.05), 2))
 
 def extract_instances_ccl(mask: np.ndarray, connectivity: int = 2) -> Tuple[np.ndarray, List[int]]:
     bin_mask = (mask > 0).astype(np.uint8)
@@ -29,27 +33,12 @@ def compute_instance_matching_matrix(
             iou_matrix[i, j] = calculate_iou(p_mask, g_mask)
     return iou_matrix
 
-def evaluate_page_instances(
+def _evaluate_page_matching(
     pred_mask: np.ndarray,
     gt_mask: np.ndarray,
     dice_correctness_threshold: float = 0.90,
     ccl_connectivity: int = 2
 ) -> Dict[str, Any]:
-    """Per-page metrics, following metric.ipynb.
-
-    Panels are connected components of the binarized masks (> 0.5).
-
-    - mIoU / mDice: every GT panel takes its best-overlapping predicted panel
-      (max IoU / max Dice over all predictions); mean over GT panels.
-    - Panel accuracy: share of GT panels whose best Dice is >= t.
-    - Page accuracy: 1 if panel accuracy == 1, else 0.
-    - Precision / recall / F1: every predicted panel takes its best-Dice GT
-      panel; TP if that Dice >= t, otherwise FP; FN = GT panels not hit by any
-      TP. P = TP / (TP + FP), R = TP / (TP + FN), F1 = 2PR / (P + R).
-    - Strict page accuracy: page accuracy == 1 and no FP.
-
-    Anything with a zero denominator (no GT panel, no predicted panel) is 0.
-    """
     gt_bin = (gt_mask > 0.5)
     pred_bin = (pred_mask > 0.5)
     inter_px = float(np.logical_and(pred_bin, gt_bin).sum())
@@ -62,41 +51,120 @@ def evaluate_page_instances(
     n_pred = len(pred_ids)
     n_gt = len(gt_ids)
 
-    # IoU and Dice of every (pred, GT) pair; pairs that do not overlap stay 0.
-    iou = np.zeros((n_pred, n_gt), dtype=np.float64)
-    dice = np.zeros((n_pred, n_gt), dtype=np.float64)
-    pred_masks = [pred_labeled == p for p in pred_ids]
-    gt_masks = [gt_labeled == g for g in gt_ids]
-    for i, p_m in enumerate(pred_masks):
-        touched = np.unique(gt_labeled[p_m])
-        for j, g_id in enumerate(gt_ids):
-            if g_id in touched:
-                iou[i, j] = calculate_iou(p_m, gt_masks[j])
-                dice[i, j] = calculate_dice(p_m, gt_masks[j])
+    if n_gt == 0 and n_pred == 0:
+        return {
+            "canonical_instance_miou": 0.0,
+            "mean_iou": 0.0,
+            "page_instance_miou": 0.0,
+            "mean_dice": 0.0,
+            "page_instance_mdice": 0.0,
+            "panel_accuracy": 0.0,
+            "page_accuracy": 0.0,
+            "strict_page_accuracy": 0.0,
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "panel_tp": 0,
+            "panel_fp": 0,
+            "panel_fn": 0,
+            "gt_count": 0,
+            "pred_count": 0,
+            "page_correct": False,
+            "gt_panel_count": 0,
+            "pred_panel_count": 0,
+            "iou_per_gt": [],
+            "dice_per_gt": [],
+            "foreground_pixel_iou": fg_pixel_iou,
+            "foreground_pixel_dice": fg_pixel_dice,
+        }
 
-    # Per GT panel: best overlap over all predictions (0 if there is none).
-    iou_per_gt = [float(iou[:, j].max()) if n_pred else 0.0 for j in range(n_gt)]
-    dice_per_gt = [float(dice[:, j].max()) if n_pred else 0.0 for j in range(n_gt)]
-    page_miou = float(np.mean(iou_per_gt)) if n_gt else 0.0
-    page_mdice = float(np.mean(dice_per_gt)) if n_gt else 0.0
-    correct_gt = sum(1 for d in dice_per_gt if d >= dice_correctness_threshold)
-    panel_accuracy = correct_gt / float(n_gt) if n_gt else 0.0
-    page_accuracy = 1.0 if panel_accuracy == 1.0 else 0.0
+    if n_gt == 0 and n_pred > 0:
+        return {
+            "canonical_instance_miou": 0.0,
+            "mean_iou": 0.0,
+            "page_instance_miou": 0.0,
+            "mean_dice": 0.0,
+            "page_instance_mdice": 0.0,
+            "panel_accuracy": 0.0,
+            "page_accuracy": 0.0,
+            "strict_page_accuracy": 0.0,
+            "precision": 0.0,
+            "recall": 1.0,
+            "f1": 0.0,
+            "panel_tp": 0,
+            "panel_fp": n_pred,
+            "panel_fn": 0,
+            "gt_count": 0,
+            "pred_count": n_pred,
+            "page_correct": False,
+            "gt_panel_count": 0,
+            "pred_panel_count": n_pred,
+            "iou_per_gt": [],
+            "dice_per_gt": [],
+            "foreground_pixel_iou": fg_pixel_iou,
+            "foreground_pixel_dice": fg_pixel_dice,
+        }
 
-    # Per predicted panel: best-Dice GT panel.
-    panel_tp, panel_fp, hit_gt = 0, 0, set()
-    for i in range(n_pred):
-        j = int(np.argmax(dice[i])) if n_gt else -1
-        if n_gt and dice[i, j] > 0.0 and dice[i, j] >= dice_correctness_threshold:
+    if n_gt > 0 and n_pred == 0:
+        return {
+            "canonical_instance_miou": 0.0,
+            "mean_iou": 0.0,
+            "page_instance_miou": 0.0,
+            "mean_dice": 0.0,
+            "page_instance_mdice": 0.0,
+            "panel_accuracy": 0.0,
+            "page_accuracy": 0.0,
+            "strict_page_accuracy": 0.0,
+            "precision": 1.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "panel_tp": 0,
+            "panel_fp": 0,
+            "panel_fn": n_gt,
+            "gt_count": n_gt,
+            "pred_count": 0,
+            "page_correct": False,
+            "gt_panel_count": n_gt,
+            "pred_panel_count": 0,
+            "iou_per_gt": [0.0] * n_gt,
+            "dice_per_gt": [0.0] * n_gt,
+            "foreground_pixel_iou": fg_pixel_iou,
+            "foreground_pixel_dice": fg_pixel_dice,
+        }
+
+    iou_matrix = compute_instance_matching_matrix(pred_labeled, pred_ids, gt_labeled, gt_ids)
+    row_ind, col_ind = linear_sum_assignment(1.0 - iou_matrix)
+
+    matched_gt = set()
+    matched_pred = set()
+    per_gt_ious = {g_id: 0.0 for g_id in gt_ids}
+    per_gt_dices = {g_id: 0.0 for g_id in gt_ids}
+    panel_tp = 0
+
+    for r, c in zip(row_ind, col_ind):
+        p_id = pred_ids[r]
+        g_id = gt_ids[c]
+        p_mask = (pred_labeled == p_id)
+        g_mask = (gt_labeled == g_id)
+        pair_iou = float(iou_matrix[r, c])
+        pair_dice = float(calculate_dice(p_mask, g_mask))
+        matched_gt.add(g_id)
+        matched_pred.add(p_id)
+        per_gt_ious[g_id] = pair_iou
+        per_gt_dices[g_id] = pair_dice
+        if pair_dice >= dice_correctness_threshold:
             panel_tp += 1
-            hit_gt.add(j)
-        else:
-            panel_fp += 1
-    panel_fn = n_gt - len(hit_gt)
-    prec = panel_tp / float(panel_tp + panel_fp) if (panel_tp + panel_fp) > 0 else 0.0
-    rec = panel_tp / float(panel_tp + panel_fn) if (panel_tp + panel_fn) > 0 else 0.0
+
+    panel_fp = n_pred - panel_tp
+    panel_fn = n_gt - panel_tp
+    page_miou = float(np.mean(list(per_gt_ious.values())))
+    page_mdice = float(np.mean(list(per_gt_dices.values())))
+    panel_accuracy = panel_tp / float(n_gt) if n_gt > 0 else 1.0
+    page_accuracy = 1.0 if panel_tp == n_gt else 0.0
+    strict_page_accuracy = 1.0 if (panel_tp == n_gt and panel_fp == 0) else 0.0
+    prec = panel_tp / float(n_pred) if n_pred > 0 else (1.0 if n_gt == 0 else 0.0)
+    rec = panel_tp / float(n_gt) if n_gt > 0 else (1.0 if n_pred == 0 else 0.0)
     f1 = (2.0 * prec * rec) / (prec + rec) if (prec + rec) > 0.0 else 0.0
-    strict_page_accuracy = 1.0 if (page_accuracy == 1.0 and panel_fp == 0) else 0.0
 
     return {
         "canonical_instance_miou": page_miou,
@@ -115,24 +183,67 @@ def evaluate_page_instances(
         "panel_fn": panel_fn,
         "gt_count": n_gt,
         "pred_count": n_pred,
-        "page_correct": page_accuracy == 1.0,
+        "page_correct": (panel_accuracy == 1.0 and n_gt > 0),
         "gt_panel_count": n_gt,
         "pred_panel_count": n_pred,
-        "iou_per_gt": iou_per_gt,
-        "dice_per_gt": dice_per_gt,
+        "iou_per_gt": [per_gt_ious[g] for g in gt_ids],
+        "dice_per_gt": [per_gt_dices[g] for g in gt_ids],
         "foreground_pixel_iou": fg_pixel_iou,
         "foreground_pixel_dice": fg_pixel_dice,
     }
 
+def _mean_at_thresholds(values: List[float]) -> Tuple[float, Dict[float, float]]:
+    """COCO-style score of per-GT-panel values (IoU or Dice of the matched pair).
+
+    At each t in ``IOU_THRESHOLDS`` a GT panel keeps its value if it is >= t and
+    scores 0 otherwise; the page score at t is the mean over GT panels (0 for a
+    page without GT panels). Returns (mean over t, {t: score at t}).
+    """
+    per_t = {
+        t: (float(np.mean([v if v >= t else 0.0 for v in values])) if values else 0.0)
+        for t in IOU_THRESHOLDS
+    }
+    return float(np.mean(list(per_t.values()))), per_t
+
+
+def evaluate_page_instances(
+    pred_mask: np.ndarray,
+    gt_mask: np.ndarray,
+    dice_correctness_threshold: float = 0.90,
+    ccl_connectivity: int = 2
+) -> Dict[str, Any]:
+    """Per-page metrics (Hungarian matching on IoU, see ``_evaluate_page_matching``)
+    plus ``miou_50_95`` / ``mdice_50_95``: the mean over t in 0.50:0.05:0.95 of
+    the page mIoU / mDice where a matched IoU / Dice below t counts as 0."""
+    res = _evaluate_page_matching(pred_mask, gt_mask, dice_correctness_threshold, ccl_connectivity)
+    res["miou_50_95"], res["miou_per_threshold"] = _mean_at_thresholds(res["iou_per_gt"])
+    res["mdice_50_95"], res["mdice_per_threshold"] = _mean_at_thresholds(res["dice_per_gt"])
+    return res
+
+
 def aggregate_dataset_instances(page_results: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Dataset metrics, following metric.ipynb: every metric is the mean over
-    pages of the per-page value (page accuracy = share of pages with panel
-    accuracy 1). ``total_*`` are plain sums of the per-page counts."""
+    """Dataset metrics: every metric is the mean over pages of its per-page value.
+
+    Per page (``evaluate_page_instances``), predicted and GT panels are matched
+    one-to-one with Hungarian matching on IoU; a matched pair is correct (TP)
+    if its Dice >= the threshold. mIoU / mDice use the matched pair (0 for an
+    unmatched GT panel); panel accuracy = TP / n_gt; page accuracy = 1 if
+    TP == n_gt; strict page accuracy additionally needs no FP; precision =
+    TP / n_pred, recall = TP / n_gt, F1 = 2PR / (P + R). mIoU@[.50:.95] /
+    mDice@[.50:.95] (``miou_50_95`` / ``mdice_50_95``) average the page mIoU /
+    mDice over t in 0.50:0.05:0.95, with matched values below t counted as 0.
+
+    ``total_*`` are plain sums of the per-page counts.
+    """
     if not page_results:
         return {
             "canonical_instance_miou": 0.0,
             "mean_iou": 0.0,
             "mean_dice": 0.0,
+            "miou_50_95": 0.0,
+            "mdice_50_95": 0.0,
+            "miou_per_threshold": {},
+            "mdice_per_threshold": {},
             "panel_accuracy": 0.0,
             "page_accuracy": 0.0,
             "strict_page_accuracy": 0.0,
@@ -152,6 +263,10 @@ def aggregate_dataset_instances(page_results: List[Dict[str, Any]]) -> Dict[str,
         "canonical_instance_miou": dataset_miou,
         "mean_iou": dataset_miou,
         "mean_dice": mean("page_instance_mdice"),
+        "miou_50_95": mean("miou_50_95"),
+        "mdice_50_95": mean("mdice_50_95"),
+        "miou_per_threshold": {t: float(np.mean([p["miou_per_threshold"][t] for p in page_results])) for t in IOU_THRESHOLDS},
+        "mdice_per_threshold": {t: float(np.mean([p["mdice_per_threshold"][t] for p in page_results])) for t in IOU_THRESHOLDS},
         "panel_accuracy": mean("panel_accuracy"),
         "page_accuracy": mean("page_accuracy"),
         "strict_page_accuracy": mean("strict_page_accuracy"),
