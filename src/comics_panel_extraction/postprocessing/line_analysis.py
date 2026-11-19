@@ -291,8 +291,9 @@ def run_line_segment_postprocessing(
         verticals: List[DetectedLine] = []
         horizontals: List[DetectedLine] = []
         if lines_raw is not None:
-            for l in lines_raw:
-                line = DetectedLine(*l[0], img_w=w, img_h=h)
+            # OpenCV 4 returns (N, 1, 4), OpenCV 5 returns (N, 4).
+            for l in np.asarray(lines_raw).reshape(-1, 4):
+                line = DetectedLine(*l, img_w=w, img_h=h)
                 (verticals if line.orientation == "vertical" else horizontals).append(line)
 
         fin_h = _merge_groups(_group_lines(horizontals, params))

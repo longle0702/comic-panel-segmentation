@@ -66,9 +66,12 @@ def main(args=None):
             return 1
 
         if str(img_p).endswith(".npy"):
-            image = np.load(str(img_p))
+            image = np.load(str(img_p))  # expected to be RGB already
         else:
-            image = cv2.imread(str(img_p))
+            image = cv2.imread(str(img_p), cv2.IMREAD_COLOR)
+            if image is not None:
+                # The model is trained on RGB (data/loader.py); OpenCV reads BGR.
+                image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
         if image is None:
             print(f"Error: failed to load image at {img_p}", file=sys.stderr)
