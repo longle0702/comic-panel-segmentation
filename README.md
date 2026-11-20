@@ -171,7 +171,6 @@ Per page:
 |---|---|---|
 | `mean_iou` (= `canonical_instance_miou`) | mIoU | Mean IoU of each GT panel with its matched prediction (0 if unmatched) |
 | `mean_dice` | mDice | Same with Dice |
-| `miou_50_95`, `mdice_50_95` | mIoU@[.50:.95], mDice@[.50:.95] | Mean over t = 0.50, 0.55, …, 0.95 of the page mIoU / mDice, counting values below t as 0 |
 | `precision` | PPr | TP / number of predicted panels |
 | `recall` | PRc | TP / number of GT panels |
 | `f1` | PF1 | 2·PPr·PRc / (PPr + PRc) on the page (0 if both are 0) |
@@ -179,7 +178,7 @@ Per page:
 | `page_accuracy` | | 1 if every GT panel is found, else 0 |
 | `strict_page_accuracy` | | 1 if every GT panel is found and there are no false positives, else 0 |
 
-Dataset values are the **mean of the per-page values**, including F1. Reported F1 is therefore not, in general, the harmonic mean of the reported precision and recall. `metrics.json` also includes `miou_per_threshold`, `mdice_per_threshold` and the totals `total_tp`, `total_fp`, `total_fn`, `total_gt`, `total_pred`, summed over pages.
+Dataset values are the **mean of the per-page values**, including F1. Reported F1 is therefore not, in general, the harmonic mean of the reported precision and recall. `metrics.json` also includes the totals `total_tp`, `total_fp`, `total_fn`, `total_gt`, `total_pred`, summed over pages.
 
 ---
 

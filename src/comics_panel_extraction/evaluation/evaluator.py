@@ -6,9 +6,6 @@ from skimage.measure import label
 from comics_panel_extraction.evaluation.overlap import calculate_dice, calculate_iou
 from comics_panel_extraction.evaluation.types import PageEvaluationResult
 
-# Thresholds for mIoU@[.50:.95] / mDice@[.50:.95]: 0.50, 0.55, ..., 0.95.
-IOU_THRESHOLDS: Tuple[float, ...] = tuple(float(t) for t in np.round(np.arange(0.50, 0.951, 0.05), 2))
-
 def extract_instances_ccl(mask: np.ndarray, connectivity: int = 2) -> Tuple[np.ndarray, List[int]]:
     bin_mask = (mask > 0).astype(np.uint8)
     labeled = label(bin_mask, connectivity=connectivity, background=0)
@@ -192,33 +189,14 @@ def _evaluate_page_matching(
         "foreground_pixel_dice": fg_pixel_dice,
     }
 
-def _mean_at_thresholds(values: List[float]) -> Tuple[float, Dict[float, float]]:
-    """COCO-style score of per-GT-panel values (IoU or Dice of the matched pair).
-
-    At each t in ``IOU_THRESHOLDS`` a GT panel keeps its value if it is >= t and
-    scores 0 otherwise; the page score at t is the mean over GT panels (0 for a
-    page without GT panels). Returns (mean over t, {t: score at t}).
-    """
-    per_t = {
-        t: (float(np.mean([v if v >= t else 0.0 for v in values])) if values else 0.0)
-        for t in IOU_THRESHOLDS
-    }
-    return float(np.mean(list(per_t.values()))), per_t
-
-
 def evaluate_page_instances(
     pred_mask: np.ndarray,
     gt_mask: np.ndarray,
     dice_correctness_threshold: float = 0.90,
     ccl_connectivity: int = 2
 ) -> Dict[str, Any]:
-    """Per-page metrics (Hungarian matching on IoU, see ``_evaluate_page_matching``)
-    plus ``miou_50_95`` / ``mdice_50_95``: the mean over t in 0.50:0.05:0.95 of
-    the page mIoU / mDice where a matched IoU / Dice below t counts as 0."""
-    res = _evaluate_page_matching(pred_mask, gt_mask, dice_correctness_threshold, ccl_connectivity)
-    res["miou_50_95"], res["miou_per_threshold"] = _mean_at_thresholds(res["iou_per_gt"])
-    res["mdice_50_95"], res["mdice_per_threshold"] = _mean_at_thresholds(res["dice_per_gt"])
-    return res
+    """Per-page metrics (Hungarian matching on IoU, see ``_evaluate_page_matching``)."""
+    return _evaluate_page_matching(pred_mask, gt_mask, dice_correctness_threshold, ccl_connectivity)
 
 
 def aggregate_dataset_instances(page_results: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -229,9 +207,7 @@ def aggregate_dataset_instances(page_results: List[Dict[str, Any]]) -> Dict[str,
     if its Dice >= the threshold. mIoU / mDice use the matched pair (0 for an
     unmatched GT panel); panel accuracy = TP / n_gt; page accuracy = 1 if
     TP == n_gt; strict page accuracy additionally needs no FP; precision =
-    TP / n_pred, recall = TP / n_gt, F1 = 2PR / (P + R). mIoU@[.50:.95] /
-    mDice@[.50:.95] (``miou_50_95`` / ``mdice_50_95``) average the page mIoU /
-    mDice over t in 0.50:0.05:0.95, with matched values below t counted as 0.
+    TP / n_pred, recall = TP / n_gt, F1 = 2PR / (P + R).
 
     ``total_*`` are plain sums of the per-page counts.
     """
@@ -240,10 +216,6 @@ def aggregate_dataset_instances(page_results: List[Dict[str, Any]]) -> Dict[str,
             "canonical_instance_miou": 0.0,
             "mean_iou": 0.0,
             "mean_dice": 0.0,
-            "miou_50_95": 0.0,
-            "mdice_50_95": 0.0,
-            "miou_per_threshold": {},
-            "mdice_per_threshold": {},
             "panel_accuracy": 0.0,
             "page_accuracy": 0.0,
             "strict_page_accuracy": 0.0,
@@ -263,10 +235,6 @@ def aggregate_dataset_instances(page_results: List[Dict[str, Any]]) -> Dict[str,
         "canonical_instance_miou": dataset_miou,
         "mean_iou": dataset_miou,
         "mean_dice": mean("page_instance_mdice"),
-        "miou_50_95": mean("miou_50_95"),
-        "mdice_50_95": mean("mdice_50_95"),
-        "miou_per_threshold": {t: float(np.mean([p["miou_per_threshold"][t] for p in page_results])) for t in IOU_THRESHOLDS},
-        "mdice_per_threshold": {t: float(np.mean([p["mdice_per_threshold"][t] for p in page_results])) for t in IOU_THRESHOLDS},
         "panel_accuracy": mean("panel_accuracy"),
         "page_accuracy": mean("page_accuracy"),
         "strict_page_accuracy": mean("strict_page_accuracy"),
